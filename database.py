@@ -401,4 +401,175 @@ class DatabaseManager:
             return {}
         except Exception as e:
             logger.error(f"Error getting result details: {e}")
+            return {}
+
+    def insert_json_data(self, json_data: Dict[str, Any], table_name: str) -> tuple[bool, str]:
+        """Insert JSON data into a specified table."""
+        try:
+            if self.use_postgres:
+                return self._insert_json_postgres(json_data, table_name)
+            else:
+                return self._insert_json_sqlite(json_data, table_name)
+        except Exception as e:
+            logger.error(f"Error inserting JSON data: {e}")
+            return False, f"Error inserting JSON data: {str(e)}"
+
+    def _insert_json_postgres(self, json_data: Dict[str, Any], table_name: str) -> tuple[bool, str]:
+        """Insert JSON data into PostgreSQL table."""
+        try:
+            with self.engine.connect() as conn:
+                with conn.begin():
+                    # Get table columns first
+                    table_info_query = text("""
+                        SELECT column_name, data_type 
+                        FROM information_schema.columns 
+                        WHERE table_name = :table_name
+                        ORDER BY ordinal_position
+                    """)
+                    
+                    result = conn.execute(table_info_query, {'table_name': table_name})
+                    columns_info = result.fetchall()
+                    
+                    if not columns_info:
+                        return False, f"Table '{table_name}' not found or has no columns"
+                    
+                    # Extract column names (excluding auto-increment columns like 'id' if not provided)
+                    available_columns = [col[0] for col in columns_info]
+                    insert_columns = []
+                    insert_values = []
+                    placeholders = []
+                    
+                    for col_name in available_columns:
+                        if col_name.lower() in ['id'] and col_name not in json_data:
+                            # Skip auto-increment ID columns if not provided in JSON
+                            continue
+                        elif col_name in json_data:
+                            insert_columns.append(col_name)
+                            insert_values.append(json_data[col_name])
+                            placeholders.append(f":{col_name}")
+                    
+                    if not insert_columns:
+                        return False, "No matching columns found between JSON data and table structure"
+                    
+                    # Build and execute INSERT query
+                    insert_query = text(f"""
+                        INSERT INTO {table_name} ({', '.join(insert_columns)})
+                        VALUES ({', '.join(placeholders)})
+                    """)
+                    
+                    # Create parameters dict
+                    params = {col: val for col, val in zip(insert_columns, insert_values)}
+                    
+                    conn.execute(insert_query, params)
+                    
+                    return True, f"Successfully inserted data into table '{table_name}'"
+                    
+        except Exception as e:
+            return False, f"PostgreSQL insertion error: {str(e)}"
+
+    def _insert_json_sqlite(self, json_data: Dict[str, Any], table_name: str) -> tuple[bool, str]:
+        """Insert JSON data into SQLite table."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get table columns
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns_info = cursor.fetchall()
+                
+                if not columns_info:
+                    return False, f"Table '{table_name}' not found"
+                
+                # Extract column names (excluding auto-increment columns like 'id' if not provided)
+                available_columns = [col[1] for col in columns_info]  # col[1] is column name
+                insert_columns = []
+                insert_values = []
+                
+                for col_name in available_columns:
+                    if col_name.lower() in ['id'] and col_name not in json_data:
+                        # Skip auto-increment ID columns if not provided in JSON
+                        continue
+                    elif col_name in json_data:
+                        insert_columns.append(col_name)
+                        insert_values.append(json_data[col_name])
+                
+                if not insert_columns:
+                    return False, "No matching columns found between JSON data and table structure"
+                
+                # Build and execute INSERT query
+                placeholders = ', '.join(['?' for _ in insert_columns])
+                insert_query = f"INSERT INTO {table_name} ({', '.join(insert_columns)}) VALUES ({placeholders})"
+                
+                cursor.execute(insert_query, insert_values)
+                conn.commit()
+                
+                return True, f"Successfully inserted data into table '{table_name}'"
+                
+        except Exception as e:
+            return False, f"SQLite insertion error: {str(e)}"
+
+    def get_table_structure(self, table_name: str) -> Dict[str, Any]:
+        """Get the structure of a table including column names and types."""
+        try:
+            if self.use_postgres:
+                return self._get_postgres_table_structure(table_name)
+            else:
+                return self._get_sqlite_table_structure(table_name)
+        except Exception as e:
+            logger.error(f"Error getting table structure: {e}")
+            return {}
+
+    def _get_postgres_table_structure(self, table_name: str) -> Dict[str, Any]:
+        """Get PostgreSQL table structure."""
+        try:
+            with self.engine.connect() as conn:
+                query = text("""
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns 
+                    WHERE table_name = :table_name
+                    ORDER BY ordinal_position
+                """)
+                
+                result = conn.execute(query, {'table_name': table_name})
+                columns = result.fetchall()
+                
+                return {
+                    'table_name': table_name,
+                    'columns': [
+                        {
+                            'name': col[0],
+                            'type': col[1],
+                            'nullable': col[2] == 'YES',
+                            'default': col[3]
+                        }
+                        for col in columns
+                    ]
+                }
+        except Exception as e:
+            logger.error(f"Error getting PostgreSQL table structure: {e}")
+            return {}
+
+    def _get_sqlite_table_structure(self, table_name: str) -> Dict[str, Any]:
+        """Get SQLite table structure."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns = cursor.fetchall()
+                
+                return {
+                    'table_name': table_name,
+                    'columns': [
+                        {
+                            'name': col[1],
+                            'type': col[2],
+                            'nullable': not col[3],  # not null = 1 means not nullable
+                            'default': col[4],
+                            'primary_key': bool(col[5])
+                        }
+                        for col in columns
+                    ]
+                }
+        except Exception as e:
+            logger.error(f"Error getting SQLite table structure: {e}")
             return {} 
