@@ -45,3 +45,13 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+.env
+.env.local
+.env.production
+.env.development
+config.yaml
+secrets.yaml
+*.key
+*.secret
+config.py

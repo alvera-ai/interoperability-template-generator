@@ -10,6 +10,8 @@ import sqlite3
 
 from database import DatabaseManager
 from api_handler import APIHandler
+from config import config
+from claude_integration import claude_generator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -234,7 +236,7 @@ with col2:
         st.info("Create a table first")
         selected_table = None
 
-# Section 6: Schema Conversion
+# Section 6: JSON Schema Conversion
 st.markdown('<div class="section-header"><h3>6. 🔄 JSON Schema Conversion</h3></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([1, 1])
@@ -361,84 +363,235 @@ with col2:
         key="output_area"
     )
 
-# Section 7: JSON Data Insertion
-st.markdown('<div class="section-header"><h3>7. 📥 Insert JSON Data into Table</h3></div>', unsafe_allow_html=True)
+# Section 7: Claude Template Generation
+st.markdown('<div class="section-header"><h3>7. 🤖 Generate Conversion Template (Claude AI)</h3></div>', unsafe_allow_html=True)
 
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader("JSON Data Input")
+if claude_generator.is_available():
+    col1, col2 = st.columns([2, 1])
     
-    # Show table structure for selected table if available
-    if selected_table and not created_tables.empty:
-        table_structure = st.session_state.db_manager.get_table_structure(selected_table)
-        if table_structure and 'columns' in table_structure:
-            st.info(f"**Table Structure for '{selected_table}':**")
-            structure_info = []
-            for col in table_structure['columns']:
-                nullable = "nullable" if col.get('nullable', True) else "not null"
-                pk = " (PK)" if col.get('primary_key', False) else ""
-                structure_info.append(f"• **{col['name']}**: {col['type']} ({nullable}){pk}")
-            st.markdown("\n".join(structure_info))
-    
-    # JSON input text area
-    json_input = st.text_area(
-        "JSON Data to Insert:",
-        height=250,
-        placeholder='''{
-  "name": "John Doe",
-  "email": "john.doe@example.com",
-  "user_id": 12345,
-  "data": {"role": "admin", "department": "IT"}
-}''',
-        help="Enter the JSON data you want to insert into the selected table"
-    )
-
-with col2:
-    st.subheader("Table Selection & Insertion")
-    
-    # Table selection for insertion (duplicate of earlier selection for convenience)
-    insert_table = st.selectbox(
-        "Select Table for Insertion:",
-        created_tables['table_name'].tolist() if not created_tables.empty else [],
-        key="insert_table_select",
-        help="Choose which table to insert the JSON data into"
-    )
-    
-    st.write("")  # spacing
-    st.write("")  # spacing
-    
-    if st.button("📥 Insert JSON Data", type="primary", use_container_width=True):
-        if json_input.strip() and insert_table:
-            try:
-                # Parse JSON data
-                json_data = json.loads(json_input)
-                
-                with st.spinner(f"Inserting data into table '{insert_table}'..."):
-                    success, message = st.session_state.db_manager.insert_json_data(json_data, insert_table)
-                    
-                    if success:
-                        st.markdown(f'<div class="success-box">✅ {message}</div>', unsafe_allow_html=True)
-                        st.balloons()
-                        
-                        # Show what was inserted
-                        st.subheader("📋 Inserted Data")
-                        inserted_df = pd.DataFrame([json_data])
-                        st.dataframe(inserted_df, use_container_width=True, hide_index=True)
-                        
-                    else:
-                        st.markdown(f'<div class="error-box">❌ {message}</div>', unsafe_allow_html=True)
-                        
-            except json.JSONDecodeError as e:
-                st.error(f"Invalid JSON format: {str(e)}")
+    with col1:
+        st.subheader("Template Configuration")
+        
+        # Template name input
+        template_name = st.text_input(
+            "Template Name:",
+            placeholder="users_api_to_db_template",
+            help="Unique name for this conversion template"
+        )
+        
+        # OpenAPI spec selection (if loaded)
+        openapi_spec_name = "Unknown"
+        if st.session_state.openapi_loaded:
+            openapi_spec_name = st.text_input(
+                "OpenAPI Spec Name:",
+                value="loaded_spec",
+                help="Name of the OpenAPI specification"
+            )
         else:
-            if not json_input.strip():
-                st.error("Please enter JSON data to insert.")
-            if not insert_table:
-                st.error("Please select a table for insertion.")
+            st.info("Load an OpenAPI specification first to generate templates")
+        
+        # API endpoint selection for schema
+        if st.session_state.openapi_loaded and st.session_state.api_endpoints:
+            selected_api_for_template = st.selectbox(
+                "Select API Endpoint for Template:",
+                list(st.session_state.api_endpoints.keys()),
+                key="template_api_select",
+                help="Choose the API endpoint to extract response schema from"
+            )
+        else:
+            selected_api_for_template = None
+        
+        # Database table selection
+        if not created_tables.empty:
+            selected_table_for_template = st.selectbox(
+                "Select Target Database Table:",
+                created_tables['table_name'].tolist(),
+                key="template_table_select",
+                help="Choose the database table to map the API response to"
+            )
+        else:
+            selected_table_for_template = None
+            st.warning("Create a database table first")
+    
+    with col2:
+        st.subheader("Generate Template")
+        st.write("")  # spacing
+        st.write("")  # spacing
+        
+        if st.button("🤖 Generate with Claude", type="primary", use_container_width=True):
+            if template_name and selected_api_for_template and selected_table_for_template:
+                # Get API response schema
+                endpoint_info = st.session_state.api_endpoints[selected_api_for_template]
+                api_schema = {}
+                responses = endpoint_info.get('responses', {})
+                if '200' in responses:
+                    response_200 = responses['200']
+                    content = response_200.get('content', {})
+                    if 'application/json' in content:
+                        api_schema = content['application/json'].get('schema', {})
+                
+                # Get database table schema
+                table_info = created_tables[created_tables['table_name'] == selected_table_for_template].iloc[0]
+                db_schema = table_info['create_command']
+                
+                if api_schema:
+                    with st.spinner("🤖 Claude is generating your conversion template..."):
+                        success, message, conversion_logic = claude_generator.generate_conversion_template(
+                            openapi_spec_name, api_schema, db_schema, selected_table_for_template
+                        )
+                        
+                        if success:
+                            # Store the template
+                            store_success, store_message = st.session_state.db_manager.store_conversion_template(
+                                template_name, openapi_spec_name, json.dumps(api_schema), 
+                                db_schema, conversion_logic, "Claude AI"
+                            )
+                            
+                            if store_success:
+                                st.markdown(f'<div class="success-box">✅ Template generated and stored successfully!</div>', unsafe_allow_html=True)
+                                st.balloons()
+                                
+                                # Show the generated conversion logic
+                                st.subheader("🔍 Generated Conversion Logic:")
+                                st.code(conversion_logic, language='python')
+                                
+                                st.rerun()
+                            else:
+                                st.error(f"Template generated but failed to store: {store_message}")
+                        else:
+                            st.error(f"Failed to generate template: {message}")
+                else:
+                    st.error("No API response schema found for the selected endpoint")
+            else:
+                missing = []
+                if not template_name:
+                    missing.append("Template Name")
+                if not selected_api_for_template:
+                    missing.append("API Endpoint")
+                if not selected_table_for_template:
+                    missing.append("Database Table")
+                st.error(f"Please provide: {', '.join(missing)}")
 
-# Section 8: Inserted Data Viewer
-st.markdown('<div class="section-header"><h3>8. 📊 View Table Data</h3></div>', unsafe_allow_html=True)
+else:
+    st.warning("🔑 Claude AI features are not available. Please configure your Anthropic API key in the .env file.")
+    st.info("See SETUP_GUIDE.md for instructions on setting up your API key.")
+
+# Section 8: Conversion Templates Management
+st.markdown('<div class="section-header"><h3>8. 📋 Conversion Templates</h3></div>', unsafe_allow_html=True)
+
+# Get existing templates
+conversion_templates = st.session_state.db_manager.get_conversion_templates()
+
+if not conversion_templates.empty:
+    st.subheader("📊 Existing Templates")
+    st.dataframe(conversion_templates, use_container_width=True, hide_index=True)
+else:
+    st.info("No conversion templates created yet. Generate your first template above.")
+
+# Section 9: Apply Conversion Template & Insert to Database
+st.markdown('<div class="section-header"><h3>9. 🔄 Convert API Response & Insert to Database</h3></div>', unsafe_allow_html=True)
+
+if not conversion_templates.empty:
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("API Response JSON Input")
+        
+        # Template selection
+        selected_template = st.selectbox(
+            "Select Conversion Template:",
+            conversion_templates['template_name'].tolist(),
+            key="apply_template_select",
+            help="Choose a template to apply to your JSON data"
+        )
+        
+        # JSON input for conversion
+        api_response_json = st.text_area(
+            "API Response JSON:",
+            height=350,
+            placeholder='''{
+  "id": 123,
+  "username": "john_doe",
+  "email": "john@example.com",
+  "full_name": "John Doe",
+  "created_at": "2024-01-15T10:30:00Z",
+  "is_active": true,
+  "profile": {
+    "age": 30,
+    "department": "Engineering"
+  }
+}''',
+            help="Paste the JSON response from your API that you want to convert and insert"
+        )
+    
+    with col2:
+        st.subheader("Convert & Insert")
+        
+        # Target table selection for insertion
+        if not created_tables.empty:
+            target_table_for_insertion = st.selectbox(
+                "Target Table for Insertion:",
+                created_tables['table_name'].tolist(),
+                key="target_insertion_table",
+                help="Choose which table to insert the converted data into"
+            )
+        else:
+            target_table_for_insertion = None
+        
+        st.write("")  # spacing
+        
+        if st.button("🔄 Convert & Insert to Database", type="primary", use_container_width=True):
+            if selected_template and api_response_json.strip() and target_table_for_insertion:
+                try:
+                    # Parse the input JSON
+                    input_json = json.loads(api_response_json)
+                    
+                    with st.spinner("🔄 Converting JSON using template..."):
+                        # Apply the conversion template
+                        convert_success, convert_message, converted_data = st.session_state.db_manager.apply_conversion_template(
+                            selected_template, input_json
+                        )
+                        
+                        if convert_success and converted_data:
+                            st.markdown(f'<div class="success-box">✅ Conversion successful!</div>', unsafe_allow_html=True)
+                            
+                            # Show the converted data
+                            st.subheader("📋 Converted Data:")
+                            converted_df = pd.DataFrame([converted_data])
+                            st.dataframe(converted_df, use_container_width=True, hide_index=True)
+                            
+                            # Insert into database
+                            with st.spinner(f"📥 Inserting into table '{target_table_for_insertion}'..."):
+                                insert_success, insert_message = st.session_state.db_manager.insert_json_data(
+                                    converted_data, target_table_for_insertion
+                                )
+                                
+                                if insert_success:
+                                    st.markdown(f'<div class="success-box">✅ {insert_message}</div>', unsafe_allow_html=True)
+                                    st.balloons()
+                                    st.rerun()  # Refresh to show updated data
+                                else:
+                                    st.markdown(f'<div class="error-box">❌ Insertion failed: {insert_message}</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown(f'<div class="error-box">❌ Conversion failed: {convert_message}</div>', unsafe_allow_html=True)
+                            
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON format: {str(e)}")
+            else:
+                missing = []
+                if not selected_template:
+                    missing.append("Template")
+                if not api_response_json.strip():
+                    missing.append("API Response JSON")
+                if not target_table_for_insertion:
+                    missing.append("Target Table")
+                st.error(f"Please provide: {', '.join(missing)}")
+
+else:
+    st.info("Create conversion templates first to convert and insert your API data.")
+
+# Section 10: View Database Results
+st.markdown('<div class="section-header"><h3>10. 📊 View Database Results</h3></div>', unsafe_allow_html=True)
 
 if not created_tables.empty:
     view_table = st.selectbox(

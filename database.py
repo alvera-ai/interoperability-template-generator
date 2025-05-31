@@ -76,6 +76,20 @@ class DatabaseManager:
                 )
             ''')
             
+            # Create table for conversion templates
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS conversion_templates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    template_name TEXT UNIQUE,
+                    openapi_spec_name TEXT,
+                    api_response_schema TEXT,
+                    db_table_schema TEXT,
+                    conversion_logic TEXT,
+                    created_by TEXT
+                )
+            ''')
+            
             conn.commit()
     
     def _init_postgres(self):
@@ -123,6 +137,18 @@ class DatabaseManager:
             Column('create_command', Text),
             Column('created_by_prompt', Text),
             Column('api_result_id', Integer)
+        )
+        
+        # Conversion templates table
+        conversion_templates = Table('conversion_templates', metadata,
+            Column('id', Integer, primary_key=True),
+            Column('timestamp', DateTime, default=datetime.utcnow),
+            Column('template_name', String(255), unique=True),
+            Column('openapi_spec_name', String(255)),
+            Column('api_response_schema', Text),
+            Column('db_table_schema', Text),
+            Column('conversion_logic', Text),
+            Column('created_by', String(255))
         )
         
         metadata.create_all(self.engine)
@@ -572,4 +598,158 @@ class DatabaseManager:
                 }
         except Exception as e:
             logger.error(f"Error getting SQLite table structure: {e}")
-            return {} 
+            return {}
+
+    def store_conversion_template(self, template_name: str, openapi_spec_name: str, 
+                                api_response_schema: str, db_table_schema: str, 
+                                conversion_logic: str, created_by: str = "system") -> tuple[bool, str]:
+        """Store a conversion template in the database."""
+        try:
+            if self.use_postgres:
+                return self._store_template_postgres(template_name, openapi_spec_name, 
+                                                   api_response_schema, db_table_schema, 
+                                                   conversion_logic, created_by)
+            else:
+                return self._store_template_sqlite(template_name, openapi_spec_name, 
+                                                 api_response_schema, db_table_schema, 
+                                                 conversion_logic, created_by)
+        except Exception as e:
+            logger.error(f"Error storing conversion template: {e}")
+            return False, f"Error storing conversion template: {str(e)}"
+
+    def _store_template_postgres(self, template_name: str, openapi_spec_name: str, 
+                               api_response_schema: str, db_table_schema: str, 
+                               conversion_logic: str, created_by: str) -> tuple[bool, str]:
+        """Store conversion template in PostgreSQL."""
+        try:
+            with self.engine.connect() as conn:
+                with conn.begin():
+                    query = text("""
+                        INSERT INTO conversion_templates 
+                        (template_name, openapi_spec_name, api_response_schema, 
+                         db_table_schema, conversion_logic, created_by)
+                        VALUES (:template_name, :openapi_spec_name, :api_response_schema, 
+                                :db_table_schema, :conversion_logic, :created_by)
+                        ON CONFLICT (template_name) DO UPDATE SET
+                        openapi_spec_name = EXCLUDED.openapi_spec_name,
+                        api_response_schema = EXCLUDED.api_response_schema,
+                        db_table_schema = EXCLUDED.db_table_schema,
+                        conversion_logic = EXCLUDED.conversion_logic,
+                        created_by = EXCLUDED.created_by,
+                        timestamp = CURRENT_TIMESTAMP
+                    """)
+                    
+                    conn.execute(query, {
+                        'template_name': template_name,
+                        'openapi_spec_name': openapi_spec_name,
+                        'api_response_schema': api_response_schema,
+                        'db_table_schema': db_table_schema,
+                        'conversion_logic': conversion_logic,
+                        'created_by': created_by
+                    })
+                    
+            return True, f"Template '{template_name}' stored successfully"
+        except Exception as e:
+            return False, f"PostgreSQL template storage error: {str(e)}"
+
+    def _store_template_sqlite(self, template_name: str, openapi_spec_name: str, 
+                             api_response_schema: str, db_table_schema: str, 
+                             conversion_logic: str, created_by: str) -> tuple[bool, str]:
+        """Store conversion template in SQLite."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO conversion_templates 
+                    (template_name, openapi_spec_name, api_response_schema, 
+                     db_table_schema, conversion_logic, created_by, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (template_name, openapi_spec_name, api_response_schema, 
+                      db_table_schema, conversion_logic, created_by))
+                
+                conn.commit()
+                
+            return True, f"Template '{template_name}' stored successfully"
+        except Exception as e:
+            return False, f"SQLite template storage error: {str(e)}"
+
+    def get_conversion_templates(self) -> pd.DataFrame:
+        """Get all conversion templates."""
+        try:
+            if self.use_postgres:
+                query = """
+                    SELECT template_name, openapi_spec_name, timestamp, created_by
+                    FROM conversion_templates
+                    ORDER BY timestamp DESC
+                """
+                return pd.read_sql_query(query, self.engine)
+            else:
+                with sqlite3.connect(self.db_path) as conn:
+                    query = '''
+                        SELECT template_name, openapi_spec_name, timestamp, created_by
+                        FROM conversion_templates
+                        ORDER BY timestamp DESC
+                    '''
+                    return pd.read_sql_query(query, conn)
+        except Exception as e:
+            logger.error(f"Error getting conversion templates: {e}")
+            return pd.DataFrame()
+
+    def get_conversion_template(self, template_name: str) -> Dict[str, Any]:
+        """Get a specific conversion template by name."""
+        try:
+            if self.use_postgres:
+                with self.engine.connect() as conn:
+                    query = text("SELECT * FROM conversion_templates WHERE template_name = :template_name")
+                    result = conn.execute(query, {'template_name': template_name}).fetchone()
+                    
+                    if result:
+                        columns = result.keys()
+                        return dict(zip(columns, result))
+            else:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT * FROM conversion_templates WHERE template_name = ?', (template_name,))
+                    
+                    result = cursor.fetchone()
+                    if result:
+                        columns = [description[0] for description in cursor.description]
+                        return dict(zip(columns, result))
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting conversion template: {e}")
+            return {}
+
+    def apply_conversion_template(self, template_name: str, input_json: Dict[str, Any]) -> tuple[bool, str, Dict[str, Any]]:
+        """Apply a conversion template to transform JSON data."""
+        try:
+            template = self.get_conversion_template(template_name)
+            if not template:
+                return False, f"Template '{template_name}' not found", {}
+            
+            conversion_logic = template.get('conversion_logic', '')
+            if not conversion_logic:
+                return False, "No conversion logic found in template", {}
+            
+            # Execute the conversion logic safely
+            # This is a simplified version - in production, you'd want more robust execution
+            try:
+                # Create a safe execution environment
+                safe_globals = {
+                    'json': json,
+                    'input_data': input_json,
+                    'output_data': {}
+                }
+                
+                exec(conversion_logic, safe_globals)
+                output_data = safe_globals.get('output_data', {})
+                
+                return True, "Conversion completed successfully", output_data
+                
+            except Exception as e:
+                return False, f"Error executing conversion logic: {str(e)}", {}
+                
+        except Exception as e:
+            logger.error(f"Error applying conversion template: {e}")
+            return False, f"Error applying conversion template: {str(e)}", {} 
