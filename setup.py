@@ -16,7 +16,8 @@ def install_requirements():
         "sqlalchemy==2.0.21",
         "pyyaml==6.0.1",
         "jsonschema==4.19.1",
-        "openapi-spec-validator==0.6.0"
+        "openapi-spec-validator==0.6.0",
+        "psycopg2-binary==2.9.7"
     ]
     
     print("Installing required packages...")
@@ -39,7 +40,8 @@ def validate_installation():
         ("sqlalchemy", "SQLAlchemy"),
         ("yaml", "PyYAML"),
         ("jsonschema", "JSON Schema"),
-        ("openapi_spec_validator", "OpenAPI Spec Validator")
+        ("openapi_spec_validator", "OpenAPI Spec Validator"),
+        ("psycopg2", "PostgreSQL Adapter")
     ]
     
     print("\nValidating installation...")
@@ -74,6 +76,10 @@ def main():
         print("  python3 -m streamlit run app.py")
         print("  or")
         print("  streamlit run app.py")
+        print("\nNew features:")
+        print("  - PostgreSQL support for table creation")
+        print("  - CREATE TABLE command execution")
+        print("  - Database table metadata tracking")
         return True
     else:
         print("\n❌ Setup validation failed")

@@ -1,21 +1,24 @@
 # API Interoperability Template Generator
 
-A powerful Streamlit application for testing APIs using OpenAPI specifications with schema validation and database storage.
+A powerful Streamlit application for testing APIs using OpenAPI specifications with PostgreSQL/SQLite database integration and table creation capabilities.
 
 ## 🚀 Features
 
 - **OpenAPI Specification Support**: Load OpenAPI specs via file upload, URL, or direct paste
-- **Schema Validation**: Validate API responses against JSON schemas
+- **Database Table Creation**: Execute CREATE TABLE commands in PostgreSQL or SQLite
+- **Dual Database Support**: Choose between PostgreSQL and SQLite
 - **Interactive Testing**: User-friendly interface for API endpoint testing
 - **Database Storage**: Store all API call results for future reference
+- **Table Metadata Tracking**: Track created tables and their creation commands
 - **Multiple Input Methods**: Support for YAML and JSON OpenAPI specifications
-- **Real-time Results**: View API responses and validation results immediately
-- **History Tracking**: Browse previous API calls and their results
+- **Real-time Results**: View API responses and table creation results immediately
+- **History Tracking**: Browse previous API calls and created tables
 
 ## 📋 Prerequisites
 
 - Python 3.8 or higher
 - pip package manager
+- PostgreSQL (optional, for PostgreSQL mode)
 
 ## 🛠️ Installation
 
@@ -39,7 +42,21 @@ streamlit run app.py
 
 ## 💡 Usage
 
-### 1. Load OpenAPI Specification
+### 1. Configure Database (New!)
+
+Navigate to "Database Settings" to choose your database:
+
+**SQLite (Default)**:
+- No setup required
+- Local file storage
+- Great for development and testing
+
+**PostgreSQL**:
+- Configure connection details
+- Production-ready
+- Better for concurrent usage
+
+### 2. Load OpenAPI Specification
 
 Choose one of three methods to load your OpenAPI specification:
 
@@ -47,109 +64,178 @@ Choose one of three methods to load your OpenAPI specification:
 - **Paste Content**: Directly paste your OpenAPI specification
 - **URL**: Provide a URL to fetch the specification
 
-### 2. Define Response Schema (Optional)
+### 3. Create Database Tables (New!)
 
-Provide a JSON schema to validate API responses. Example:
+Provide a CREATE TABLE command to create tables for storing API response data:
 
-```json
-{
-  "type": "object",
-  "properties": {
-    "id": {"type": "integer"},
-    "name": {"type": "string"},
-    "email": {"type": "string", "format": "email"}
-  },
-  "required": ["id", "name"]
-}
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-### 3. Enter User Prompt
+### 4. Enter User Prompt
 
-Describe what you want to test. The application will attempt to extract parameters from your prompt automatically.
+Describe what you want to test, including table creation context:
+"Get user information for user ID 1 and prepare users table for data storage"
 
-### 4. Execute API Calls
+### 5. Execute Operations
 
-- Select an endpoint from the available GET endpoints
-- Configure parameters (auto-populated from your prompt when possible)
-- Add custom headers if needed
-- Execute the API call and view results
+- **Create Table**: Execute your CREATE TABLE command
+- **Test API**: Select endpoints and configure parameters
+- **Store Results**: All results are automatically stored with table metadata
 
-### 5. View Results
+### 6. View Results
 
 - See real-time API responses
-- Validate responses against your schema
-- All results are automatically stored in the database
+- Track created tables and their schemas
+- All results are stored with table creation context
 
-## 📊 Database Results
+## 📊 New Pages
 
-Navigate to the "Database Results" page to:
+### Created Tables
+- View all tables created through the application
+- See table schemas and creation commands
+- Track when and why tables were created
 
-- View recent API call history
-- Filter and search through stored results
-- View detailed information about specific API calls
-- Analyze response patterns and status codes
-
-## 📚 API Documentation
-
-The "API Documentation" page provides:
-
-- Overview of the loaded OpenAPI specification
-- Detailed endpoint documentation
-- Parameter descriptions and requirements
-- Response schemas and examples
+### Database Settings
+- Switch between SQLite and PostgreSQL
+- Configure PostgreSQL connection details
+- View current database status
 
 ## 🏗️ Project Structure
 
 ```
 interoperability-template-generator/
-├── app.py                 # Main Streamlit application
-├── database.py            # Database management module
+├── app.py                 # Main Streamlit application (updated)
+├── database.py            # Database management with PostgreSQL support
 ├── api_handler.py         # API handling and OpenAPI processing
-├── requirements.txt       # Python dependencies
+├── requirements.txt       # Python dependencies (includes psycopg2)
 ├── README.md             # This file
 ├── example_openapi.yaml   # Example OpenAPI specification
+├── setup.py              # Updated setup script
 └── api_results.db        # SQLite database (created automatically)
 ```
 
 ## 🔧 Configuration
 
-The application uses SQLite for data storage by default. The database file (`api_results.db`) is created automatically in the project directory.
+### SQLite Mode (Default)
+- Database file (`api_results.db`) created automatically
+- No additional setup required
+- Perfect for development and single-user scenarios
+
+### PostgreSQL Mode
+Configure these connection parameters:
+- **Host**: PostgreSQL server address
+- **Port**: Database port (default: 5432)
+- **Database**: Database name
+- **Username**: Database user
+- **Password**: User password
 
 ### Database Tables
 
+Both SQLite and PostgreSQL support these tables:
+
 1. **api_results**: Stores API call results
-   - `id`: Primary key
-   - `timestamp`: When the call was made
-   - `user_prompt`: User's description
-   - `api_endpoint`: Called endpoint
-   - `schema_used`: Validation schema
-   - `response_data`: API response
-   - `status_code`: HTTP status code
-   - `response_headers`: Response headers
+   - Added: `created_table_name`, `create_table_command`
 
 2. **openapi_specs**: Stores OpenAPI specifications
-   - `id`: Primary key
-   - `timestamp`: When the spec was loaded
-   - `spec_name`: Name/identifier
-   - `spec_content`: Full specification content
+
+3. **created_tables_metadata** (New): Tracks created tables
+   - `table_name`: Name of the created table
+   - `create_command`: The SQL command used
+   - `created_by_prompt`: User prompt that triggered creation
+   - `timestamp`: When the table was created
 
 ## 🧪 Example Usage
 
-1. Load the provided `example_openapi.yaml` file
-2. Enter a prompt like: "Get user information for user ID 123"
-3. Select the `/users/{userId}` endpoint
-4. The application will auto-populate `userId` with `123`
-5. Execute the call and view results
+1. **Configure Database**:
+   - Go to "Database Settings"
+   - Choose PostgreSQL or keep SQLite
+   - Apply configuration
+
+2. **Load OpenAPI Spec**:
+   - Upload `example_openapi.yaml`
+   - Click "Load OpenAPI Spec"
+
+3. **Create a Table**:
+   ```sql
+   CREATE TABLE test_users (
+       id INTEGER PRIMARY KEY,
+       name TEXT NOT NULL,
+       email TEXT UNIQUE
+   );
+   ```
+
+4. **Test API**:
+   - Enter prompt: "Get user data for ID 1 and store in test_users table"
+   - Select `/users/{userId}` endpoint
+   - Execute the API call
+
+5. **View Results**:
+   - Check "Created Tables" page for table metadata
+   - View "Database Results" for API call history
+
+## 🆕 New Features
+
+### CREATE TABLE Command Execution
+- Execute SQL CREATE TABLE statements
+- Support for both PostgreSQL and SQLite syntax
+- Automatic table name extraction
+- Error handling and validation
+
+### Database Flexibility
+- Switch between SQLite and PostgreSQL
+- PostgreSQL connection management
+- Automatic schema creation
+
+### Enhanced Tracking
+- Track table creation alongside API calls
+- Store CREATE TABLE commands for reference
+- Link API responses with created tables
 
 ## 🛡️ Error Handling
 
-The application includes comprehensive error handling for:
+Enhanced error handling for:
+- Invalid CREATE TABLE syntax
+- Database connection failures
+- PostgreSQL authentication issues
+- Table creation conflicts
+- Cross-database compatibility
 
-- Invalid OpenAPI specifications
-- Network connectivity issues
-- Invalid JSON schemas
-- API endpoint errors
-- Database operations
+## 🔮 Future Enhancements
+
+- **Data Insertion**: Automatic INSERT statement generation from API responses
+- **Table Management**: DROP, ALTER table operations
+- **Schema Migration**: Version control for database schemas
+- **Query Builder**: Visual query construction
+- **Data Validation**: Type checking before insertion
+- **Bulk Operations**: Multiple table creation and API testing
+- **Export/Import**: Database schema export and import functionality
+
+## 🆘 Troubleshooting
+
+### PostgreSQL Connection Issues
+```bash
+# Check PostgreSQL is running
+pg_isready -h localhost -p 5432
+
+# Test connection
+psql -h localhost -p 5432 -U username -d database_name
+```
+
+### Permission Issues with Table Creation
+- Ensure database user has CREATE TABLE privileges
+- Check database exists and is accessible
+- Verify schema permissions in PostgreSQL
+
+### SQLite vs PostgreSQL Syntax
+- Use `SERIAL` for auto-increment in PostgreSQL
+- Use `INTEGER PRIMARY KEY` for SQLite
+- The app handles both syntaxes appropriately
 
 ## 🤝 Contributing
 

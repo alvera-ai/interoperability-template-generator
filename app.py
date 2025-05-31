@@ -4,6 +4,7 @@ import yaml
 import pandas as pd
 from typing import Dict, Any
 import logging
+import os
 from datetime import datetime
 
 from database import DatabaseManager
@@ -17,9 +18,16 @@ logger = logging.getLogger(__name__)
 if 'api_handler' not in st.session_state:
     st.session_state.api_handler = APIHandler()
 if 'db_manager' not in st.session_state:
-    st.session_state.db_manager = DatabaseManager()
+    # Database configuration
+    use_postgres = st.session_state.get('use_postgres', False)
+    postgres_config = st.session_state.get('postgres_config', {})
+    st.session_state.db_manager = DatabaseManager(use_postgres=use_postgres, postgres_config=postgres_config)
 if 'openapi_loaded' not in st.session_state:
     st.session_state.openapi_loaded = False
+if 'use_postgres' not in st.session_state:
+    st.session_state.use_postgres = False
+if 'postgres_config' not in st.session_state:
+    st.session_state.postgres_config = {}
 
 # Page configuration
 st.set_page_config(
@@ -63,6 +71,14 @@ st.markdown("""
         border: 1px solid #f5c6cb;
         margin: 1rem 0;
     }
+    .warning-box {
+        background-color: #fff3cd;
+        color: #856404;
+        padding: 1rem;
+        border-radius: 5px;
+        border: 1px solid #ffeaa7;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -70,18 +86,74 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>🔗 API Interoperability Template Generator</h1>
-    <p>Test APIs using OpenAPI specifications with schema validation</p>
+    <p>Test APIs and create database tables from OpenAPI specifications</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar for navigation
+# Sidebar for navigation and configuration
 st.sidebar.title("Navigation")
 page = st.sidebar.selectbox(
     "Choose a page",
-    ["API Tester", "Database Results", "API Documentation"]
+    ["API Tester", "Database Results", "Created Tables", "API Documentation", "Database Settings"]
 )
 
-if page == "API Tester":
+# Database configuration in sidebar
+if page == "Database Settings":
+    st.markdown('<div class="section-header"><h3>⚙️ Database Configuration</h3></div>', unsafe_allow_html=True)
+    
+    db_type = st.radio(
+        "Database Type",
+        ["SQLite (Local)", "PostgreSQL"],
+        index=0 if not st.session_state.use_postgres else 1
+    )
+    
+    if db_type == "PostgreSQL":
+        st.subheader("PostgreSQL Configuration")
+        
+        with st.form("postgres_config"):
+            host = st.text_input("Host", value=st.session_state.postgres_config.get('host', 'localhost'))
+            port = st.text_input("Port", value=st.session_state.postgres_config.get('port', '5432'))
+            database = st.text_input("Database", value=st.session_state.postgres_config.get('database', 'api_interop'))
+            username = st.text_input("Username", value=st.session_state.postgres_config.get('username', 'postgres'))
+            password = st.text_input("Password", type="password", value=st.session_state.postgres_config.get('password', ''))
+            
+            submitted = st.form_submit_button("Apply Configuration")
+            
+            if submitted:
+                st.session_state.postgres_config = {
+                    'host': host,
+                    'port': port,
+                    'database': database,
+                    'username': username,
+                    'password': password
+                }
+                st.session_state.use_postgres = True
+                
+                # Reinitialize database manager
+                try:
+                    st.session_state.db_manager = DatabaseManager(
+                        use_postgres=True, 
+                        postgres_config=st.session_state.postgres_config
+                    )
+                    st.success("✅ PostgreSQL configuration applied successfully!")
+                except Exception as e:
+                    st.error(f"❌ Failed to connect to PostgreSQL: {e}")
+                    st.session_state.use_postgres = False
+    
+    else:  # SQLite
+        st.session_state.use_postgres = False
+        if st.button("Apply SQLite Configuration"):
+            st.session_state.db_manager = DatabaseManager(use_postgres=False)
+            st.success("✅ SQLite configuration applied successfully!")
+    
+    # Show current database status
+    st.subheader("Current Database Status")
+    if st.session_state.use_postgres:
+        st.info(f"🐘 Using PostgreSQL: {st.session_state.postgres_config.get('host', 'localhost')}:{st.session_state.postgres_config.get('port', '5432')}")
+    else:
+        st.info("📁 Using SQLite (local file)")
+
+elif page == "API Tester":
     # Main content area
     col1, col2 = st.columns([1, 1])
     
@@ -140,13 +212,18 @@ if page == "API Tester":
                 else:
                     st.markdown('<div class="error-box">❌ Failed to load OpenAPI specification. Please check the format.</div>', unsafe_allow_html=True)
         
-        # Schema Input
-        st.subheader("2. Response Schema (Optional)")
-        schema_input = st.text_area(
-            "JSON Schema for validation",
-            height=150,
-            placeholder='{\n  "type": "object",\n  "properties": {\n    "id": {"type": "integer"},\n    "name": {"type": "string"}\n  }\n}',
-            help="Provide a JSON schema to validate API responses"
+        # CREATE TABLE Command Input
+        st.subheader("2. CREATE TABLE Command")
+        create_table_command = st.text_area(
+            "SQL CREATE TABLE command",
+            height=200,
+            placeholder='''CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);''',
+            help="Provide a SQL CREATE TABLE statement to create a table for storing API response data"
         )
         
         # User Prompt
@@ -154,12 +231,26 @@ if page == "API Tester":
         user_prompt = st.text_area(
             "Describe what you want to test",
             height=100,
-            placeholder="e.g., Get user information for user ID 123",
+            placeholder="e.g., Get user information for user ID 123 and store in users table",
             help="Describe your API testing scenario"
         )
     
     with col2:
-        st.markdown('<div class="section-header"><h3>🚀 API Testing</h3></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header"><h3>🚀 API Testing & Table Creation</h3></div>', unsafe_allow_html=True)
+        
+        # Execute CREATE TABLE command first
+        if create_table_command and user_prompt:
+            if st.button("🗃️ Create Table", type="secondary"):
+                with st.spinner("Creating table..."):
+                    success, message, table_name = st.session_state.db_manager.execute_create_table(
+                        create_table_command, user_prompt
+                    )
+                    
+                    if success:
+                        st.markdown(f'<div class="success-box">✅ {message}</div>', unsafe_allow_html=True)
+                        st.session_state.last_created_table = table_name
+                    else:
+                        st.markdown(f'<div class="error-box">❌ {message}</div>', unsafe_allow_html=True)
         
         if st.session_state.openapi_loaded:
             # Show available endpoints
@@ -224,7 +315,7 @@ if page == "API Tester":
                         )
                     
                     # Make API call
-                    if st.button("🚀 Execute API Call", type="primary"):
+                    if st.button("🚀 Execute API Call & Store Results", type="primary"):
                         if not user_prompt:
                             st.warning("Please provide a user prompt describing your test scenario.")
                         else:
@@ -245,26 +336,19 @@ if page == "API Tester":
                                     selected_endpoint, clean_params, headers
                                 )
                                 
-                                # Validate against schema if provided
-                                schema_validation_result = ""
-                                if schema_input:
-                                    try:
-                                        schema = json.loads(schema_input)
-                                        is_valid, validation_msg = st.session_state.api_handler.validate_schema(
-                                            response_data, schema
-                                        )
-                                        schema_validation_result = f"Schema Validation: {'✅ Valid' if is_valid else '❌ Invalid'} - {validation_msg}"
-                                    except json.JSONDecodeError:
-                                        schema_validation_result = "❌ Invalid schema format"
+                                # Get table information
+                                created_table_name = getattr(st.session_state, 'last_created_table', None)
                                 
                                 # Store result in database
                                 result_id = st.session_state.db_manager.store_api_result(
                                     user_prompt=user_prompt,
                                     api_endpoint=selected_endpoint,
-                                    schema_used=schema_input or "None",
+                                    schema_used=create_table_command or "None",
                                     response_data=response_data,
                                     status_code=status_code,
-                                    response_headers=response_headers
+                                    response_headers=response_headers,
+                                    created_table_name=created_table_name,
+                                    create_table_command=create_table_command
                                 )
                                 
                                 # Display results
@@ -274,9 +358,9 @@ if page == "API Tester":
                                 status_color = "green" if 200 <= status_code < 300 else "red"
                                 st.markdown(f"**Status Code:** <span style='color: {status_color}'>{status_code}</span>", unsafe_allow_html=True)
                                 
-                                # Schema validation
-                                if schema_validation_result:
-                                    st.markdown(f"**{schema_validation_result}**")
+                                # Table creation status
+                                if created_table_name:
+                                    st.markdown(f"**Created Table:** {created_table_name}")
                                 
                                 # Response data
                                 st.subheader("Response Data")
@@ -287,10 +371,51 @@ if page == "API Tester":
                                     st.json(response_headers)
                                 
                                 st.success(f"✅ Result stored in database with ID: {result_id}")
+                                
+                                # Suggest data insertion
+                                if created_table_name and 200 <= status_code < 300:
+                                    st.markdown('<div class="warning-box">💡 <strong>Next Step:</strong> You can now insert the API response data into your created table using SQL INSERT statements.</div>', unsafe_allow_html=True)
             else:
                 st.warning("No GET endpoints found in the OpenAPI specification.")
         else:
             st.info("👆 Please load an OpenAPI specification first to see available endpoints.")
+
+elif page == "Created Tables":
+    st.markdown('<div class="section-header"><h3>🗃️ Created Tables</h3></div>', unsafe_allow_html=True)
+    
+    # Show created tables
+    created_tables = st.session_state.db_manager.get_created_tables()
+    
+    if not created_tables.empty:
+        st.subheader("Tables Created from API Testing")
+        
+        # Display tables overview
+        st.dataframe(created_tables[['table_name', 'timestamp', 'created_by_prompt']], use_container_width=True)
+        
+        # Table details
+        if not created_tables.empty:
+            selected_table = st.selectbox(
+                "Select a table to view details",
+                created_tables['table_name'].tolist(),
+                format_func=lambda x: f"{x} - {created_tables[created_tables['table_name']==x]['created_by_prompt'].iloc[0][:50]}..."
+            )
+            
+            if selected_table:
+                table_info = created_tables[created_tables['table_name'] == selected_table].iloc[0]
+                
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    st.subheader("Table Information")
+                    st.write(f"**Table Name:** {table_info['table_name']}")
+                    st.write(f"**Created:** {table_info['timestamp']}")
+                    st.write(f"**Created By:** {table_info['created_by_prompt'][:100]}...")
+                
+                with col2:
+                    st.subheader("CREATE TABLE Command")
+                    st.code(table_info['create_command'], language='sql')
+    else:
+        st.info("No tables have been created yet. Go to the API Tester page and create some tables!")
 
 elif page == "Database Results":
     st.markdown('<div class="section-header"><h3>📊 Stored API Results</h3></div>', unsafe_allow_html=True)
@@ -325,13 +450,15 @@ elif page == "Database Results":
                         st.write(f"**User Prompt:** {result_details['user_prompt']}")
                         st.write(f"**API Endpoint:** {result_details['api_endpoint']}")
                         st.write(f"**Status Code:** {result_details['status_code']}")
+                        if result_details.get('created_table_name'):
+                            st.write(f"**Created Table:** {result_details['created_table_name']}")
                     
                     with col2:
-                        st.subheader("Schema Used")
-                        if result_details['schema_used'] != "None":
-                            st.code(result_details['schema_used'], language='json')
+                        st.subheader("CREATE TABLE Command")
+                        if result_details.get('create_table_command'):
+                            st.code(result_details['create_table_command'], language='sql')
                         else:
-                            st.write("No schema validation used")
+                            st.write("No table creation command used")
                     
                     st.subheader("Response Data")
                     st.json(result_details['response_data'])
@@ -390,7 +517,7 @@ elif page == "API Documentation":
 st.markdown("---")
 st.markdown(
     "<div style='text-align: center; color: #666; padding: 1rem;'>"
-    "Built with ❤️ using Streamlit | API Interoperability Template Generator"
+    "Built with ❤️ using Streamlit | API Interoperability Template Generator with Database Integration"
     "</div>",
     unsafe_allow_html=True
 ) 

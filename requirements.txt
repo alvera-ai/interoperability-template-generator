@@ -4,4 +4,5 @@ pandas==2.0.3
 sqlalchemy==2.0.21
 pyyaml==6.0.1
 jsonschema==4.19.1
-openapi-spec-validator==0.6.0 
+openapi-spec-validator==0.6.0
+psycopg2-binary==2.9.7 
