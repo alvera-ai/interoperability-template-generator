@@ -71,7 +71,7 @@ def main():
     if validate_installation():
         print("\n✅ Setup completed successfully!")
         print("\nTo run the application:")
-        print("  python3 app.py")
+        print("  python3 -m streamlit run app.py")
         print("  or")
         print("  streamlit run app.py")
         return True

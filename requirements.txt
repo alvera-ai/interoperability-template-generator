@@ -2,8 +2,6 @@ streamlit==1.28.1
 requests==2.31.0
 pandas==2.0.3
 sqlalchemy==2.0.21
-sqlite3-utils==3.35
 pyyaml==6.0.1
 jsonschema==4.19.1
-openapi-spec-validator==0.6.0
-python-json-logger==2.0.7 
+openapi-spec-validator==0.6.0 
