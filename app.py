@@ -6,6 +6,7 @@ from typing import Dict, Any
 import logging
 import os
 from datetime import datetime
+import sqlite3
 
 from database import DatabaseManager
 from api_handler import APIHandler
@@ -94,7 +95,7 @@ with col1:
     )
 
 with col2:
-    if uploaded_file is not None:
+    if uploaded_file is not None: 
         if st.button("🚀 Load OpenAPI Spec", type="primary", use_container_width=True):
             file_type = uploaded_file.name.split('.')[-1]
             openapi_content = uploaded_file.read().decode('utf-8')
@@ -359,6 +360,125 @@ with col2:
         disabled=True,
         key="output_area"
     )
+
+# Section 7: JSON Data Insertion
+st.markdown('<div class="section-header"><h3>7. 📥 Insert JSON Data into Table</h3></div>', unsafe_allow_html=True)
+
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.subheader("JSON Data Input")
+    
+    # Show table structure for selected table if available
+    if selected_table and not created_tables.empty:
+        table_structure = st.session_state.db_manager.get_table_structure(selected_table)
+        if table_structure and 'columns' in table_structure:
+            st.info(f"**Table Structure for '{selected_table}':**")
+            structure_info = []
+            for col in table_structure['columns']:
+                nullable = "nullable" if col.get('nullable', True) else "not null"
+                pk = " (PK)" if col.get('primary_key', False) else ""
+                structure_info.append(f"• **{col['name']}**: {col['type']} ({nullable}){pk}")
+            st.markdown("\n".join(structure_info))
+    
+    # JSON input text area
+    json_input = st.text_area(
+        "JSON Data to Insert:",
+        height=250,
+        placeholder='''{
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "user_id": 12345,
+  "data": {"role": "admin", "department": "IT"}
+}''',
+        help="Enter the JSON data you want to insert into the selected table"
+    )
+
+with col2:
+    st.subheader("Table Selection & Insertion")
+    
+    # Table selection for insertion (duplicate of earlier selection for convenience)
+    insert_table = st.selectbox(
+        "Select Table for Insertion:",
+        created_tables['table_name'].tolist() if not created_tables.empty else [],
+        key="insert_table_select",
+        help="Choose which table to insert the JSON data into"
+    )
+    
+    st.write("")  # spacing
+    st.write("")  # spacing
+    
+    if st.button("📥 Insert JSON Data", type="primary", use_container_width=True):
+        if json_input.strip() and insert_table:
+            try:
+                # Parse JSON data
+                json_data = json.loads(json_input)
+                
+                with st.spinner(f"Inserting data into table '{insert_table}'..."):
+                    success, message = st.session_state.db_manager.insert_json_data(json_data, insert_table)
+                    
+                    if success:
+                        st.markdown(f'<div class="success-box">✅ {message}</div>', unsafe_allow_html=True)
+                        st.balloons()
+                        
+                        # Show what was inserted
+                        st.subheader("📋 Inserted Data")
+                        inserted_df = pd.DataFrame([json_data])
+                        st.dataframe(inserted_df, use_container_width=True, hide_index=True)
+                        
+                    else:
+                        st.markdown(f'<div class="error-box">❌ {message}</div>', unsafe_allow_html=True)
+                        
+            except json.JSONDecodeError as e:
+                st.error(f"Invalid JSON format: {str(e)}")
+        else:
+            if not json_input.strip():
+                st.error("Please enter JSON data to insert.")
+            if not insert_table:
+                st.error("Please select a table for insertion.")
+
+# Section 8: Inserted Data Viewer
+st.markdown('<div class="section-header"><h3>8. 📊 View Table Data</h3></div>', unsafe_allow_html=True)
+
+if not created_tables.empty:
+    view_table = st.selectbox(
+        "Select Table to View Data:",
+        created_tables['table_name'].tolist(),
+        key="view_table_select",
+        help="Choose which table's data you want to view"
+    )
+    
+    col1, col2 = st.columns([1, 4])
+    
+    with col1:
+        if st.button("🔍 View Data", type="secondary", use_container_width=True):
+            if view_table:
+                try:
+                    # Query the selected table
+                    if st.session_state.db_manager.use_postgres:
+                        with st.session_state.db_manager.engine.connect() as conn:
+                            query_result = pd.read_sql_query(f"SELECT * FROM {view_table} ORDER BY id DESC LIMIT 50", conn)
+                    else:
+                        with sqlite3.connect(st.session_state.db_manager.db_path) as conn:
+                            query_result = pd.read_sql_query(f"SELECT * FROM {view_table} ORDER BY id DESC LIMIT 50", conn)
+                    
+                    if not query_result.empty:
+                        st.subheader(f"📋 Data from '{view_table}' (Latest 50 records)")
+                        st.dataframe(query_result, use_container_width=True, hide_index=True)
+                        
+                        # Show record count
+                        st.info(f"Showing {len(query_result)} records from table '{view_table}'")
+                    else:
+                        st.info(f"No data found in table '{view_table}'")
+                        
+                except Exception as e:
+                    st.error(f"Error querying table: {str(e)}")
+    
+    with col2:
+        st.write("")  # spacing for alignment
+
+else:
+    st.info("Create a table first to view its data.")
 
 # Footer
 st.markdown("---")
