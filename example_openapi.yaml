@@ -1,0 +1,309 @@
+openapi: 3.0.3
+info:
+  title: Sample User API
+  description: A sample API for testing the interoperability template generator
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: https://jsonplaceholder.typicode.com
+    description: JSONPlaceholder - Free fake API for testing
+
+paths:
+  /users:
+    get:
+      summary: Get all users
+      description: Retrieve a list of all users
+      operationId: getUsers
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '500':
+          description: Internal server error
+
+  /users/{userId}:
+    get:
+      summary: Get user by ID
+      description: Retrieve a specific user by their ID
+      operationId: getUserById
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: The ID of the user to retrieve
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+        '500':
+          description: Internal server error
+
+  /posts:
+    get:
+      summary: Get all posts
+      description: Retrieve a list of all posts with optional filtering
+      operationId: getPosts
+      parameters:
+        - name: userId
+          in: query
+          required: false
+          description: Filter posts by user ID
+          schema:
+            type: integer
+            format: int64
+        - name: _limit
+          in: query
+          required: false
+          description: Limit the number of results
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Post'
+        '400':
+          description: Bad request
+        '500':
+          description: Internal server error
+
+  /posts/{postId}:
+    get:
+      summary: Get post by ID
+      description: Retrieve a specific post by its ID
+      operationId: getPostById
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          description: The ID of the post to retrieve
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '404':
+          description: Post not found
+        '500':
+          description: Internal server error
+
+  /posts/{postId}/comments:
+    get:
+      summary: Get comments for a post
+      description: Retrieve all comments for a specific post
+      operationId: getCommentsByPostId
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          description: The ID of the post
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Comment'
+        '404':
+          description: Post not found
+        '500':
+          description: Internal server error
+
+  /albums:
+    get:
+      summary: Get all albums
+      description: Retrieve a list of all albums
+      operationId: getAlbums
+      parameters:
+        - name: userId
+          in: query
+          required: false
+          description: Filter albums by user ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Album'
+        '500':
+          description: Internal server error
+
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Unique identifier for the user
+        name:
+          type: string
+          description: Full name of the user
+        username:
+          type: string
+          description: Username for the user
+        email:
+          type: string
+          format: email
+          description: Email address of the user
+        address:
+          $ref: '#/components/schemas/Address'
+        phone:
+          type: string
+          description: Phone number of the user
+        website:
+          type: string
+          format: uri
+          description: Website of the user
+        company:
+          $ref: '#/components/schemas/Company'
+      required:
+        - id
+        - name
+        - username
+        - email
+
+    Address:
+      type: object
+      properties:
+        street:
+          type: string
+        suite:
+          type: string
+        city:
+          type: string
+        zipcode:
+          type: string
+        geo:
+          $ref: '#/components/schemas/Geo'
+
+    Geo:
+      type: object
+      properties:
+        lat:
+          type: string
+        lng:
+          type: string
+
+    Company:
+      type: object
+      properties:
+        name:
+          type: string
+        catchPhrase:
+          type: string
+        bs:
+          type: string
+
+    Post:
+      type: object
+      properties:
+        userId:
+          type: integer
+          format: int64
+          description: ID of the user who created the post
+        id:
+          type: integer
+          format: int64
+          description: Unique identifier for the post
+        title:
+          type: string
+          description: Title of the post
+        body:
+          type: string
+          description: Content of the post
+      required:
+        - userId
+        - id
+        - title
+        - body
+
+    Comment:
+      type: object
+      properties:
+        postId:
+          type: integer
+          format: int64
+          description: ID of the post this comment belongs to
+        id:
+          type: integer
+          format: int64
+          description: Unique identifier for the comment
+        name:
+          type: string
+          description: Name/title of the comment
+        email:
+          type: string
+          format: email
+          description: Email of the commenter
+        body:
+          type: string
+          description: Content of the comment
+      required:
+        - postId
+        - id
+        - name
+        - email
+        - body
+
+    Album:
+      type: object
+      properties:
+        userId:
+          type: integer
+          format: int64
+          description: ID of the user who owns the album
+        id:
+          type: integer
+          format: int64
+          description: Unique identifier for the album
+        title:
+          type: string
+          description: Title of the album
+      required:
+        - userId
+        - id
+        - title 
