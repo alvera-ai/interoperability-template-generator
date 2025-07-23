@@ -95,32 +95,38 @@ You are an expert data transformation engineer. I need you to generate Python co
 
 **Target Table Name:** {table_name}
 
-**Requirements:**
-1. Write Python code that takes the variable `input_data` (which contains the API response JSON) and transforms it into `output_data` (which should match the database table structure).
-2. Handle field mapping, data type conversions, and any necessary transformations.
-3. Only include fields that exist in both the API response and database table.
-4. Handle missing or null values appropriately.
-5. The code should be safe to execute and not include any imports or external dependencies beyond basic Python and json.
-6. Use only these available variables: `input_data`, `output_data`, `json`
+**CRITICAL REQUIREMENTS:**
+1. ALWAYS initialize `output_data = {{}}` at the beginning
+2. NEVER create empty if statements - always include a body with at least a pass statement
+3. Handle field mapping, data type conversions, and any necessary transformations
+4. Only include fields that exist in both the API response and database table
+5. Handle missing or null values appropriately with proper defaults
+6. The code must be syntactically correct Python
+7. Use only these available variables: `input_data`, `output_data`, `json`
+8. Include proper error handling for type conversions
+9. Provide sensible defaults for required fields
 
-**Example structure:**
+**MANDATORY Structure - Follow this pattern:**
 ```python
-# Extract and transform data from input_data
+# Initialize output data dictionary
 output_data = {{}}
 
-# Map API fields to database fields
-if 'api_field_name' in input_data:
-    output_data['db_field_name'] = input_data['api_field_name']
+# Direct field mappings with type conversion
+if 'api_field' in input_data:
+    output_data['db_field'] = str(input_data['api_field'])
 
-# Handle data type conversions
-if 'id' in input_data:
-    output_data['id'] = int(input_data['id'])
+# Handle nested objects safely
+if 'nested_object' in input_data and isinstance(input_data['nested_object'], dict):
+    nested = input_data['nested_object']
+    if 'field' in nested:
+        output_data['mapped_field'] = str(nested['field'])
 
-# Add any necessary default values or transformations
-# ...
+# Provide defaults for required fields
+if 'required_field' not in output_data:
+    output_data['required_field'] = 'default_value'
 ```
 
-Please provide ONLY the Python conversion code, no explanations or markdown formatting:
+Generate ONLY valid Python code that follows this structure. Do not include markdown formatting, explanations, or any text outside the Python code:
 """
 
     def _extract_conversion_logic(self, response_text: str) -> str:

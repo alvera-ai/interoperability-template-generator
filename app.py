@@ -17,6 +17,69 @@ from claude_integration import claude_generator
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def resolve_schema_references(schema: Dict[str, Any], openapi_spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively resolve $ref references in OpenAPI schemas."""
+    if not isinstance(schema, dict):
+        return schema
+    
+    # If this is a reference, resolve it
+    if '$ref' in schema:
+        ref_path = schema['$ref']
+        if ref_path.startswith('#/'):
+            # Remove the '#/' and split by '/'
+            path_parts = ref_path[2:].split('/')
+            resolved_schema = openapi_spec
+            
+            # Navigate to the referenced schema
+            for part in path_parts:
+                if part in resolved_schema:
+                    resolved_schema = resolved_schema[part]
+                else:
+                    logger.warning(f"Could not resolve reference: {ref_path}")
+                    return schema  # Return original if can't resolve
+            
+            # Recursively resolve any references in the resolved schema
+            return resolve_schema_references(resolved_schema, openapi_spec)
+        else:
+            logger.warning(f"External references not supported: {ref_path}")
+            return schema
+    
+    # If this is an object, recursively resolve all its properties
+    resolved_schema = {}
+    for key, value in schema.items():
+        if key == 'properties' and isinstance(value, dict):
+            # Resolve all properties
+            resolved_schema[key] = {
+                prop_name: resolve_schema_references(prop_value, openapi_spec)
+                for prop_name, prop_value in value.items()
+            }
+        elif key == 'items' and isinstance(value, dict):
+            # Resolve array items schema
+            resolved_schema[key] = resolve_schema_references(value, openapi_spec)
+        elif key == 'allOf' and isinstance(value, list):
+            # Resolve allOf schemas
+            resolved_schema[key] = [
+                resolve_schema_references(item, openapi_spec) for item in value
+            ]
+        elif key == 'anyOf' and isinstance(value, list):
+            # Resolve anyOf schemas
+            resolved_schema[key] = [
+                resolve_schema_references(item, openapi_spec) for item in value
+            ]
+        elif key == 'oneOf' and isinstance(value, list):
+            # Resolve oneOf schemas
+            resolved_schema[key] = [
+                resolve_schema_references(item, openapi_spec) for item in value
+            ]
+        elif isinstance(value, dict):
+            # Recursively resolve nested objects
+            resolved_schema[key] = resolve_schema_references(value, openapi_spec)
+        else:
+            # Keep primitive values as-is
+            resolved_schema[key] = value
+    
+    return resolved_schema
+
 # Initialize session state
 if 'api_handler' not in st.session_state:
     st.session_state.api_handler = APIHandler()
@@ -129,7 +192,11 @@ if st.session_state.openapi_loaded and st.session_state.api_endpoints:
             content = response_200.get('content', {})
             if 'application/json' in content:
                 schema = content['application/json'].get('schema', {})
-                schema_details = schema
+                # Resolve $ref references to show full schema
+                if schema and st.session_state.api_handler.openapi_spec:
+                    schema_details = resolve_schema_references(schema, st.session_state.api_handler.openapi_spec)
+                else:
+                    schema_details = schema
         
         api_data.append({
             'API Endpoint': endpoint_path,
@@ -236,142 +303,16 @@ with col2:
         st.info("Create a table first")
         selected_table = None
 
-# Section 6: JSON Schema Conversion
-st.markdown('<div class="section-header"><h3>6. 🔄 JSON Schema Conversion</h3></div>', unsafe_allow_html=True)
-
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    st.subheader("Input: API Response Schema")
-    
-    # Auto-populate with selected API schema if available
-    auto_schema = ""
-    if selected_api and st.session_state.api_endpoints:
-        endpoint_info = st.session_state.api_endpoints[selected_api]
-        responses = endpoint_info.get('responses', {})
-        if '200' in responses:
-            response_200 = responses['200']
-            content = response_200.get('content', {})
-            if 'application/json' in content:
-                schema = content['application/json'].get('schema', {})
-                if schema:
-                    auto_schema = json.dumps(schema, indent=2)
-    
-    input_json_schema = st.text_area(
-        "JSON Schema (from OpenAPI response):",
-        height=300,
-        value=auto_schema,
-        placeholder='''{
-  "type": "object",
-  "properties": {
-    "id": {"type": "integer"},
-    "name": {"type": "string"},
-    "email": {"type": "string"},
-    "created_at": {"type": "string", "format": "date-time"}
-  }
-}''',
-        help="Paste the JSON schema from your OpenAPI specification"
-    )
-
-with col2:
-    st.subheader("Output: Database Table Schema")
-    
-    if st.button("🔄 Convert Schema", type="secondary", use_container_width=True):
-        if input_json_schema.strip():
-            try:
-                # Parse the input JSON schema
-                schema = json.loads(input_json_schema)
-                
-                # Convert to database-compatible format
-                converted_schemas = []
-                
-                if selected_table and not created_tables.empty:
-                    # Get the CREATE TABLE command for the selected table
-                    table_info = created_tables[created_tables['table_name'] == selected_table].iloc[0]
-                    create_command = table_info['create_command']
-                    
-                    # Generate sample INSERT statements based on the schema
-                    if schema.get('type') == 'object' and 'properties' in schema:
-                        properties = schema['properties']
-                        
-                        # Create sample data based on schema
-                        sample_data = {}
-                        for prop_name, prop_info in properties.items():
-                            prop_type = prop_info.get('type', 'string')
-                            if prop_type == 'integer':
-                                sample_data[prop_name] = 123
-                            elif prop_type == 'string':
-                                if 'format' in prop_info and prop_info['format'] == 'date-time':
-                                    sample_data[prop_name] = datetime.now().isoformat()
-                                elif 'email' in prop_name.lower():
-                                    sample_data[prop_name] = "user@example.com"
-                                else:
-                                    sample_data[prop_name] = f"sample_{prop_name}"
-                            elif prop_type == 'boolean':
-                                sample_data[prop_name] = True
-                            else:
-                                sample_data[prop_name] = f"sample_{prop_name}"
-                        
-                        # Create multiple sample records
-                        for i in range(3):
-                            record = sample_data.copy()
-                            if 'id' in record:
-                                record['id'] = i + 1
-                            if 'name' in record:
-                                record['name'] = f"User {i + 1}"
-                            
-                            converted_schemas.append({
-                                'Record': i + 1,
-                                'Table': selected_table,
-                                'JSON Data': json.dumps(record, indent=2)
-                            })
-                    
-                    if converted_schemas:
-                        conversion_df = pd.DataFrame(converted_schemas)
-                        st.dataframe(conversion_df, use_container_width=True, hide_index=True)
-                        
-                        # Show INSERT statement examples
-                        st.subheader("💡 Sample INSERT Statements")
-                        columns = list(sample_data.keys())
-                        values_placeholder = ', '.join(['%s'] * len(columns))
-                        insert_statement = f"INSERT INTO {selected_table} ({', '.join(columns)}) VALUES ({values_placeholder});"
-                        st.code(insert_statement, language='sql')
-                        
-                        # Show actual values for first record
-                        if converted_schemas:
-                            first_record = json.loads(converted_schemas[0]['JSON Data'])
-                            values = [str(first_record[col]) for col in columns]
-                            quoted_values = [f"'{v}'" for v in values]
-                            actual_insert = f"INSERT INTO {selected_table} ({', '.join(columns)}) VALUES ({', '.join(quoted_values)});"
-                            st.code(actual_insert, language='sql')
-                    else:
-                        st.warning("Could not generate sample data from the provided schema.")
-                else:
-                    st.warning("Please select a database table first.")
-                    
-            except json.JSONDecodeError:
-                st.error("Invalid JSON schema. Please check the format.")
-        else:
-            st.warning("Please enter a JSON schema to convert.")
-    
-    # Display area for converted schemas
-    st.text_area(
-        "Converted Table Schemas:",
-        height=200,
-        placeholder="Converted schemas will appear here after conversion...",
-        disabled=True,
-        key="output_area"
-    )
-
-# Section 7: Claude Template Generation
-st.markdown('<div class="section-header"><h3>7. 🤖 Generate Conversion Template (Claude AI)</h3></div>', unsafe_allow_html=True)
+# Section 6: Claude Template Generation with Editable Code
+st.markdown('<div class="section-header"><h3>6. 🤖 Generate & Edit Conversion Template (Claude AI)</h3></div>', unsafe_allow_html=True)
 
 if claude_generator.is_available():
+    # Template Configuration
+    st.subheader("Template Configuration")
+    
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader("Template Configuration")
-        
         # Template name input
         template_name = st.text_input(
             "Template Name:",
@@ -389,7 +330,18 @@ if claude_generator.is_available():
             )
         else:
             st.info("Load an OpenAPI specification first to generate templates")
+    
+    with col2:
+        st.write("")  # spacing
+        st.write("")  # spacing
         
+        # Generate button
+        generate_button = st.button("🤖 Generate with Claude", type="primary", use_container_width=True)
+    
+    # API and table selection for template generation
+    col1, col2 = st.columns(2)
+    
+    with col1:
         # API endpoint selection for schema
         if st.session_state.openapi_loaded and st.session_state.api_endpoints:
             selected_api_for_template = st.selectbox(
@@ -400,7 +352,8 @@ if claude_generator.is_available():
             )
         else:
             selected_api_for_template = None
-        
+    
+    with col2:
         # Database table selection
         if not created_tables.empty:
             selected_table_for_template = st.selectbox(
@@ -413,71 +366,183 @@ if claude_generator.is_available():
             selected_table_for_template = None
             st.warning("Create a database table first")
     
-    with col2:
-        st.subheader("Generate Template")
-        st.write("")  # spacing
-        st.write("")  # spacing
-        
-        if st.button("🤖 Generate with Claude", type="primary", use_container_width=True):
-            if template_name and selected_api_for_template and selected_table_for_template:
-                # Get API response schema
-                endpoint_info = st.session_state.api_endpoints[selected_api_for_template]
-                api_schema = {}
-                responses = endpoint_info.get('responses', {})
-                if '200' in responses:
-                    response_200 = responses['200']
-                    content = response_200.get('content', {})
-                    if 'application/json' in content:
-                        api_schema = content['application/json'].get('schema', {})
-                
-                # Get database table schema
-                table_info = created_tables[created_tables['table_name'] == selected_table_for_template].iloc[0]
-                db_schema = table_info['create_command']
-                
-                if api_schema:
-                    with st.spinner("🤖 Claude is generating your conversion template..."):
-                        success, message, conversion_logic = claude_generator.generate_conversion_template(
-                            openapi_spec_name, api_schema, db_schema, selected_table_for_template
-                        )
-                        
-                        if success:
-                            # Store the template
-                            store_success, store_message = st.session_state.db_manager.store_conversion_template(
-                                template_name, openapi_spec_name, json.dumps(api_schema), 
-                                db_schema, conversion_logic, "Claude AI"
-                            )
-                            
-                            if store_success:
-                                st.markdown(f'<div class="success-box">✅ Template generated and stored successfully!</div>', unsafe_allow_html=True)
-                                st.balloons()
-                                
-                                # Show the generated conversion logic
-                                st.subheader("🔍 Generated Conversion Logic:")
-                                st.code(conversion_logic, language='python')
-                                
-                                st.rerun()
-                            else:
-                                st.error(f"Template generated but failed to store: {store_message}")
-                        else:
-                            st.error(f"Failed to generate template: {message}")
-                else:
-                    st.error("No API response schema found for the selected endpoint")
+    # Initialize session state for generated code
+    if 'generated_conversion_logic' not in st.session_state:
+        st.session_state.generated_conversion_logic = ""
+    if 'claude_generation_success' not in st.session_state:
+        st.session_state.claude_generation_success = False
+    
+    # Generate conversion logic with Claude
+    if generate_button:
+        if template_name and selected_api_for_template and selected_table_for_template:
+            # Get API response schema
+            endpoint_info = st.session_state.api_endpoints[selected_api_for_template]
+            api_schema = {}
+            responses = endpoint_info.get('responses', {})
+            if '200' in responses:
+                response_200 = responses['200']
+                content = response_200.get('content', {})
+                if 'application/json' in content:
+                    schema = content['application/json'].get('schema', {})
+                    # Resolve $ref references to show full schema
+                    if schema and st.session_state.api_handler.openapi_spec:
+                        api_schema = resolve_schema_references(schema, st.session_state.api_handler.openapi_spec)
+                    else:
+                        api_schema = schema
+            
+            # Get database table schema
+            table_info = created_tables[created_tables['table_name'] == selected_table_for_template].iloc[0]
+            db_schema = table_info['create_command']
+            
+            if api_schema:
+                with st.spinner("🤖 Claude is generating your conversion template..."):
+                    success, message, conversion_logic = claude_generator.generate_conversion_template(
+                        openapi_spec_name, api_schema, db_schema, selected_table_for_template
+                    )
+                    
+                    if success:
+                        st.session_state.generated_conversion_logic = conversion_logic
+                        st.session_state.claude_generation_success = True
+                        st.session_state.api_schema_for_template = api_schema
+                        st.session_state.db_schema_for_template = db_schema
+                        st.markdown(f'<div class="success-box">✅ Conversion logic generated! You can now edit it below.</div>', unsafe_allow_html=True)
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to generate template: {message}")
             else:
-                missing = []
-                if not template_name:
-                    missing.append("Template Name")
-                if not selected_api_for_template:
-                    missing.append("API Endpoint")
-                if not selected_table_for_template:
-                    missing.append("Database Table")
-                st.error(f"Please provide: {', '.join(missing)}")
+                st.error("No API response schema found for the selected endpoint")
+        else:
+            missing = []
+            if not template_name:
+                missing.append("Template Name")
+            if not selected_api_for_template:
+                missing.append("API Endpoint")
+            if not selected_table_for_template:
+                missing.append("Database Table")
+            st.error(f"Please provide: {', '.join(missing)}")
+    
+    # Editable conversion logic interface
+    if st.session_state.claude_generation_success and st.session_state.generated_conversion_logic:
+        st.subheader("🔧 Edit Generated Conversion Logic")
+        st.info("💡 Tip: You can modify the generated code to fix any syntax errors or customize the conversion logic.")
+        
+        # Editable text area with the generated code
+        edited_conversion_logic = st.text_area(
+            "Conversion Logic (Python Code):",
+            value=st.session_state.generated_conversion_logic,
+            height=400,
+            help="Edit the generated Python code. Make sure to keep the 'input_data' and 'output_data' variables.",
+            key="conversion_logic_editor"
+        )
+        
+        # Test and Save buttons
+        col1, col2, col3 = st.columns([1, 1, 2])
+        
+        with col1:
+            test_button = st.button("🧪 Test Code", type="secondary", use_container_width=True)
+        
+        with col2:
+            save_button = st.button("💾 Save Template", type="primary", use_container_width=True)
+        
+        # Test the conversion logic
+        if test_button:
+            if edited_conversion_logic.strip():
+                # Create sample test data based on the API schema
+                test_data = {}
+                if 'api_schema_for_template' in st.session_state:
+                    api_schema = st.session_state.api_schema_for_template
+                    if api_schema.get('type') == 'object' and 'properties' in api_schema:
+                        properties = api_schema['properties']
+                        for prop_name, prop_info in properties.items():
+                            prop_type = prop_info.get('type', 'string')
+                            if prop_type == 'integer':
+                                test_data[prop_name] = 123
+                            elif prop_type == 'string':
+                                if 'email' in prop_name.lower():
+                                    test_data[prop_name] = "test@example.com"
+                                else:
+                                    test_data[prop_name] = f"test_{prop_name}"
+                            elif prop_type == 'object':
+                                # Handle nested objects
+                                nested_props = prop_info.get('properties', {})
+                                nested_obj = {}
+                                for nested_name, nested_info in nested_props.items():
+                                    nested_type = nested_info.get('type', 'string')
+                                    if nested_type == 'string':
+                                        nested_obj[nested_name] = f"test_{nested_name}"
+                                    elif nested_type == 'object':
+                                        # Handle deeply nested objects
+                                        deep_props = nested_info.get('properties', {})
+                                        deep_obj = {}
+                                        for deep_name, deep_info in deep_props.items():
+                                            deep_obj[deep_name] = f"test_{deep_name}"
+                                        nested_obj[nested_name] = deep_obj
+                                test_data[prop_name] = nested_obj
+                
+                with st.spinner("🧪 Testing conversion logic..."):
+                    test_success, test_message, test_output = claude_generator.test_conversion_logic(
+                        edited_conversion_logic, test_data
+                    )
+                    
+                    if test_success:
+                        st.markdown(f'<div class="success-box">✅ Test successful!</div>', unsafe_allow_html=True)
+                        st.subheader("📋 Test Results:")
+                        
+                        col_test1, col_test2 = st.columns(2)
+                        with col_test1:
+                            st.write("**Input Data:**")
+                            st.json(test_data)
+                        
+                        with col_test2:
+                            st.write("**Output Data:**")
+                            st.json(test_output)
+                    else:
+                        st.markdown(f'<div class="error-box">❌ Test failed: {test_message}</div>', unsafe_allow_html=True)
+                        st.warning("Please fix the syntax errors in your conversion logic.")
+            else:
+                st.warning("Please enter conversion logic to test.")
+        
+        # Save the template
+        if save_button:
+            if template_name and edited_conversion_logic.strip():
+                # Test the logic first before saving
+                test_success, test_message, _ = claude_generator.test_conversion_logic(
+                    edited_conversion_logic, {"test": "data"}
+                )
+                
+                if test_success:
+                    # Store the template
+                    store_success, store_message = st.session_state.db_manager.store_conversion_template(
+                        template_name, 
+                        openapi_spec_name, 
+                        json.dumps(st.session_state.get('api_schema_for_template', {})), 
+                        st.session_state.get('db_schema_for_template', ''), 
+                        edited_conversion_logic, 
+                        "Claude AI (Edited)"
+                    )
+                    
+                    if store_success:
+                        st.markdown(f'<div class="success-box">✅ Template saved successfully!</div>', unsafe_allow_html=True)
+                        st.balloons()
+                        
+                        # Clear the generated logic to allow new generation
+                        st.session_state.generated_conversion_logic = ""
+                        st.session_state.claude_generation_success = False
+                        
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to save template: {store_message}")
+                else:
+                    st.error(f"Cannot save template with syntax errors: {test_message}")
+            else:
+                st.error("Please provide a template name and conversion logic.")
 
 else:
     st.warning("🔑 Claude AI features are not available. Please configure your Anthropic API key in the .env file.")
     st.info("See SETUP_GUIDE.md for instructions on setting up your API key.")
 
-# Section 8: Conversion Templates Management
-st.markdown('<div class="section-header"><h3>8. 📋 Conversion Templates</h3></div>', unsafe_allow_html=True)
+# Section 7: Conversion Templates Management
+st.markdown('<div class="section-header"><h3>7. 📋 Conversion Templates</h3></div>', unsafe_allow_html=True)
 
 # Get existing templates
 conversion_templates = st.session_state.db_manager.get_conversion_templates()
@@ -488,8 +553,8 @@ if not conversion_templates.empty:
 else:
     st.info("No conversion templates created yet. Generate your first template above.")
 
-# Section 9: Apply Conversion Template & Insert to Database
-st.markdown('<div class="section-header"><h3>9. 🔄 Convert API Response & Insert to Database</h3></div>', unsafe_allow_html=True)
+# Section 8: Apply Conversion Template & Insert to Database
+st.markdown('<div class="section-header"><h3>8. 🔄 Convert API Response & Insert to Database</h3></div>', unsafe_allow_html=True)
 
 if not conversion_templates.empty:
     col1, col2 = st.columns([2, 1])
@@ -590,8 +655,8 @@ if not conversion_templates.empty:
 else:
     st.info("Create conversion templates first to convert and insert your API data.")
 
-# Section 10: View Database Results
-st.markdown('<div class="section-header"><h3>10. 📊 View Database Results</h3></div>', unsafe_allow_html=True)
+# Section 9: View Database Results
+st.markdown('<div class="section-header"><h3>9. 📊 View Database Results</h3></div>', unsafe_allow_html=True)
 
 if not created_tables.empty:
     view_table = st.selectbox(
